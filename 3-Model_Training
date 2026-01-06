@@ -1,0 +1,157 @@
+"""
+Phase 3 - Model Training
+Hana K.
+
+Trying different models to predict volatility. Will compare RF, XGBoost, and 
+linear regression as a baseline.
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import joblib
+import warnings
+warnings.filterwarnings('ignore')
+
+TICKER = 'AAPL'
+
+# load everything
+X_train = pd.read_csv(f'{TICKER}_X_train.csv', index_col=0, parse_dates=True)
+y_train = pd.read_csv(f'{TICKER}_y_train.csv', index_col=0, parse_dates=True).squeeze()
+X_val = pd.read_csv(f'{TICKER}_X_val.csv', index_col=0, parse_dates=True)
+y_val = pd.read_csv(f'{TICKER}_y_val.csv', index_col=0, parse_dates=True).squeeze()
+X_test = pd.read_csv(f'{TICKER}_X_test.csv', index_col=0, parse_dates=True)
+y_test = pd.read_csv(f'{TICKER}_y_test.csv', index_col=0, parse_dates=True).squeeze()
+
+print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+
+results = {}
+
+# --- Ridge Regression (regularized linear) ---
+print("\nRidge Regression...")
+best_lr, best_score = None, -999
+for alpha in [0.01, 0.1, 1, 10, 100]:
+    lr = Ridge(alpha=alpha)
+    lr.fit(X_train, y_train)
+    score = r2_score(y_val, lr.predict(X_val))
+    if score > best_score:
+        best_score = score
+        best_lr = lr
+lr_pred = best_lr.predict(X_val)
+
+results['Ridge'] = {
+    'rmse': np.sqrt(mean_squared_error(y_val, lr_pred)),
+    'mae': mean_absolute_error(y_val, lr_pred),
+    'r2': r2_score(y_val, lr_pred),
+    'pred': lr_pred
+}
+print(f"  R²: {results['Ridge']['r2']:.3f}")
+
+# --- Random Forest ---
+print("\nRandom Forest...")
+best_rf, best_score = None, -999
+for trees in [200, 300, 500]:
+    for depth in [5, 10, 20, None]:
+        for min_leaf in [1, 2, 5]:
+            rf = RandomForestRegressor(n_estimators=trees, max_depth=depth, 
+                                       min_samples_leaf=min_leaf, random_state=42, n_jobs=-1)
+            rf.fit(X_train, y_train)
+            score = r2_score(y_val, rf.predict(X_val))
+            if score > best_score:
+                best_score = score
+                best_rf = rf
+                best_params = (trees, depth, min_leaf)
+
+print(f"  Best: {best_params[0]} trees, depth={best_params[1]}, min_leaf={best_params[2]}")
+rf_pred = best_rf.predict(X_val)
+results['RF'] = {
+    'rmse': np.sqrt(mean_squared_error(y_val, rf_pred)),
+    'mae': mean_absolute_error(y_val, rf_pred),
+    'r2': r2_score(y_val, rf_pred),
+    'pred': rf_pred
+}
+print(f"  R²: {results['RF']['r2']:.3f}")
+
+# --- XGBoost ---
+print("\nXGBoost (this takes a bit)...")
+try:
+    from xgboost import XGBRegressor
+    
+    best_xgb, best_score = None, -999
+    for trees in [100, 200, 300]:
+        for depth in [3, 4, 5, 6]:
+            for eta in [0.01, 0.05, 0.1]:
+                for subsample in [0.8, 1.0]:
+                    xgb = XGBRegressor(n_estimators=trees, max_depth=depth, learning_rate=eta,
+                                       subsample=subsample, colsample_bytree=0.8,
+                                       random_state=42, verbosity=0)
+                    xgb.fit(X_train, y_train)
+                    score = r2_score(y_val, xgb.predict(X_val))
+                    if score > best_score:
+                        best_score = score
+                        best_xgb = xgb
+                        best_xgb_params = (trees, depth, eta, subsample)
+    
+    print(f"  Best: trees={best_xgb_params[0]}, depth={best_xgb_params[1]}, lr={best_xgb_params[2]}")
+    xgb_pred = best_xgb.predict(X_val)
+    results['XGB'] = {
+        'rmse': np.sqrt(mean_squared_error(y_val, xgb_pred)),
+        'mae': mean_absolute_error(y_val, xgb_pred),
+        'r2': r2_score(y_val, xgb_pred),
+        'pred': xgb_pred
+    }
+    print(f"  R²: {results['XGB']['r2']:.3f}")
+except ImportError:
+    print("  xgboost not installed, skipping")
+
+# --- Results ---
+print("\n" + "="*40)
+print("Results on validation set:")
+res_df = pd.DataFrame({m: {'RMSE': r['rmse'], 'MAE': r['mae'], 'R²': r['r2']} 
+                       for m, r in results.items()}).T
+print(res_df.round(4))
+
+winner = res_df['RMSE'].idxmin()
+print(f"\nBest: {winner}")
+
+# --- Plots ---
+fig, ax = plt.subplots(2, 2, figsize=(10, 8))
+
+# pred vs actual
+for name, r in results.items():
+    ax[0,0].scatter(y_val, r['pred'], alpha=0.5, label=name, s=20)
+ax[0,0].plot([y_val.min(), y_val.max()], [y_val.min(), y_val.max()], 'k--')
+ax[0,0].legend()
+ax[0,0].set_xlabel('Actual')
+ax[0,0].set_ylabel('Predicted')
+ax[0,0].set_title('Pred vs Actual')
+
+# rmse bars
+ax[0,1].bar(results.keys(), [r['rmse'] for r in results.values()])
+ax[0,1].set_title('RMSE')
+
+# r2 bars
+ax[1,0].bar(results.keys(), [r['r2'] for r in results.values()])
+ax[1,0].set_title('R² Score')
+ax[1,0].set_ylim(0, 1)
+
+# feature importance
+imp = pd.Series(best_rf.feature_importances_, index=X_train.columns).sort_values()
+imp.plot(kind='barh', ax=ax[1,1])
+ax[1,1].set_title('Feature Importance (RF)')
+
+plt.tight_layout()
+plt.savefig(f'{TICKER}_models.png', dpi=150)
+plt.show()
+
+# save models for phase 4
+joblib.dump(best_lr, f'{TICKER}_ridge.joblib')
+joblib.dump(best_rf, f'{TICKER}_rf.joblib')
+if 'XGB' in results:
+    joblib.dump(best_xgb, f'{TICKER}_xgb.joblib')
+res_df.to_csv(f'{TICKER}_results.csv')
+
+print(f"\nModels saved. Best model: {winner} (RMSE={res_df.loc[winner, 'RMSE']:.4f})")

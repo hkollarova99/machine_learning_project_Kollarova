@@ -1,0 +1,70 @@
+"""
+Phase 1 - Getting the data
+Hana Kollárová, Jan 2026
+
+Downloading AAPL stock data from Yahoo Finance, quick data analysis
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import yfinance as yf
+import warnings
+warnings.filterwarnings('ignore')
+
+# I tried MSFT first but AAPL has more volatility which is more interesting
+TICKER = 'AAPL'
+START = '2022-01-01'
+END = '2024-12-31'  # ~3 years
+
+print(f"Downloading {TICKER}...")
+df = yf.download(TICKER, start=START, end=END, progress=False)
+
+# yfinance sometimes returns weird multi-index columns
+if isinstance(df.columns, pd.MultiIndex):
+    df.columns = df.columns.get_level_values(0)
+
+print(f"Got {len(df)} days of data")
+print(df.head())
+
+# check for gaps/missing data
+print(f"\nMissing values: {df.isnull().sum().sum()}")
+
+# quick stats
+print(f"\nPrice range: ${df['Close'].min():.2f} - ${df['Close'].max():.2f}")
+
+# daily returns - need this for volatility calc later
+df['ret'] = df['Close'].pct_change() * 100
+
+# daily range as % - might be useful
+df['range_pct'] = (df['High'] - df['Low']) / df['Close'] * 100
+
+# --- plots ---
+fig, ax = plt.subplots(2, 2, figsize=(12, 8))
+
+ax[0,0].plot(df['Close'])
+ax[0,0].set_title('Price')
+
+ax[0,1].bar(df.index, df['Volume'], width=1, alpha=0.7)
+ax[0,1].set_title('Volume')
+
+ax[1,0].plot(df['ret'], alpha=0.7)
+ax[1,0].axhline(0, color='red', linestyle='--')
+ax[1,0].set_title('Daily Returns %')
+
+ax[1,1].hist(df['ret'].dropna(), bins=50, alpha=0.7)
+ax[1,1].axvline(0, color='red')
+ax[1,1].set_title('Return Distribution')
+
+plt.tight_layout()
+plt.show()
+
+# some numbers for the report
+print(f"\nAvg daily return: {df['ret'].mean():.3f}%")
+print(f"Std of returns: {df['ret'].std():.3f}%")
+print(f"Worst day: {df['ret'].min():.2f}%")
+print(f"Best day: {df['ret'].max():.2f}%")
+
+# save it
+df.to_csv(f'{TICKER}_stock_data.csv')
+print(f"\nSaved to {TICKER}_stock_data.csv")

@@ -1,0 +1,145 @@
+"""
+Phase 4 - Evaluation & Insights
+Hana K.
+
+Testing on held-out data and analyzing what worked/didn't work.
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import joblib
+import warnings
+warnings.filterwarnings('ignore')
+
+TICKER = 'AAPL'
+
+# load test data
+X_test = pd.read_csv(f'{TICKER}_X_test.csv', index_col=0, parse_dates=True)
+y_test = pd.read_csv(f'{TICKER}_y_test.csv', index_col=0, parse_dates=True).squeeze()
+print(f"Test set: {len(X_test)} samples")
+
+# load trained models
+ridge = joblib.load(f'{TICKER}_ridge.joblib')
+rf = joblib.load(f'{TICKER}_rf.joblib')
+xgb = joblib.load(f'{TICKER}_xgb.joblib')
+
+# predictions on test set
+models = {
+    'Ridge': ridge.predict(X_test),
+    'RF': rf.predict(X_test),
+    'XGB': xgb.predict(X_test)
+}
+
+# --- Test set performance ---
+print("\n" + "="*40)
+print("TEST SET RESULTS (final evaluation)")
+print("="*40)
+
+results = {}
+for name, pred in models.items():
+    results[name] = {
+        'RMSE': np.sqrt(mean_squared_error(y_test, pred)),
+        'MAE': mean_absolute_error(y_test, pred),
+        'R²': r2_score(y_test, pred)
+    }
+
+res_df = pd.DataFrame(results).T
+print(res_df.round(4))
+
+winner = res_df['RMSE'].idxmin()
+print(f"\nBest model: {winner}")
+
+# --- Visualizations ---
+fig, axes = plt.subplots(2, 3, figsize=(14, 9))
+fig.suptitle(f'{TICKER} Volatility Prediction - Final Evaluation', fontsize=13)
+
+# Row 1: Predicted vs Actual for each model
+for i, (name, pred) in enumerate(models.items()):
+    ax = axes[0, i]
+    ax.scatter(y_test, pred, alpha=0.6, s=25)
+    ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+    ax.set_xlabel('Actual')
+    ax.set_ylabel('Predicted')
+    ax.set_title(f'{name} (R²={results[name]["R²"]:.3f})')
+    ax.grid(True, alpha=0.3)
+
+# Row 2 left: Time series - actual vs best model prediction
+ax = axes[1, 0]
+ax.plot(y_test.index, y_test.values, label='Actual', linewidth=1.5)
+ax.plot(y_test.index, models[winner], label=f'{winner} pred', alpha=0.8)
+ax.set_xlabel('Date')
+ax.set_ylabel('Volatility')
+ax.set_title('Actual vs Predicted over time')
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+# Row 2 middle: Residuals
+ax = axes[1, 1]
+residuals = y_test.values - models[winner]
+ax.scatter(models[winner], residuals, alpha=0.6, s=25)
+ax.axhline(0, color='red', linestyle='--')
+ax.set_xlabel('Predicted')
+ax.set_ylabel('Residual')
+ax.set_title(f'{winner} Residuals')
+ax.grid(True, alpha=0.3)
+
+# Row 2 right: Feature importance comparison (RF vs XGB)
+ax = axes[1, 2]
+rf_imp = pd.Series(rf.feature_importances_, index=X_test.columns)
+xgb_imp = pd.Series(xgb.feature_importances_, index=X_test.columns)
+imp_df = pd.DataFrame({'RF': rf_imp, 'XGB': xgb_imp})
+imp_df.plot(kind='barh', ax=ax, width=0.8)
+ax.set_xlabel('Importance')
+ax.set_title('Feature Importance')
+ax.legend(loc='lower right')
+
+plt.tight_layout()
+plt.savefig(f'{TICKER}_evaluation.png', dpi=150)
+plt.show()
+
+# --- Analysis ---
+print("\n" + "="*40)
+print("ANALYSIS")
+print("="*40)
+
+# feature importance
+print("\nMost important features:")
+top_features = rf_imp.sort_values(ascending=False).head(3)
+for feat, imp in top_features.items():
+    print(f"  {feat}: {imp:.3f}")
+
+# where did the model fail?
+abs_errors = np.abs(residuals)
+worst_idx = np.argsort(abs_errors)[-5:]  # 5 worst predictions
+print(f"\nWorst predictions (highest error):")
+for idx in worst_idx:
+    print(f"  {y_test.index[idx].strftime('%Y-%m-%d')}: actual={y_test.iloc[idx]:.2f}, pred={models[winner][idx]:.2f}")
+
+# check if errors correlate with high/low volatility
+high_vol_mask = y_test > y_test.median()
+low_vol_errors = abs_errors[~high_vol_mask].mean()
+high_vol_errors = abs_errors[high_vol_mask].mean()
+print(f"\nAvg error on low volatility days: {low_vol_errors:.3f}")
+print(f"Avg error on high volatility days: {high_vol_errors:.3f}")
+
+# save final results
+res_df.to_csv(f'{TICKER}_test_results.csv')
+
+print("\n" + "="*40)
+print("SUMMARY")
+print("="*40)
+print(f"""
+Best model: {winner}
+Test R²: {results[winner]['R²']:.3f}
+Test RMSE: {results[winner]['RMSE']:.3f}
+
+Key findings:
+- Past volatility (vol_10d) is by far the most predictive feature
+- Model struggles more on high volatility days
+- RF generalized better than XGBoost on test data
+
+Saved: {TICKER}_evaluation.png, {TICKER}_test_results.csv
+""")
+

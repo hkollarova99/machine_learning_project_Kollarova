@@ -1,0 +1,101 @@
+"""
+Phase 2 - Feature Engineering
+Hana K.
+
+Creating features for volatility prediction. Target is 20-day rolling std of returns.
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings('ignore')
+
+TICKER = 'AAPL'
+df = pd.read_csv(f'{TICKER}_stock_data.csv', index_col=0, parse_dates=True)
+print(f"Loaded {len(df)} rows")
+
+# make sure we have returns
+if 'ret' not in df.columns:
+    df['ret'] = df['Close'].pct_change() * 100
+
+# TARGET: 20-day volatility (this is what we're predicting)
+df['vol_20d'] = df['ret'].rolling(20).std()
+
+# FEATURES
+# moving averages - classic indicators
+df['sma_20'] = df['Close'].rolling(20).mean()
+df['sma_50'] = df['Close'].rolling(50).mean()
+
+# how far price is from its moving avg (% terms)
+df['price_vs_sma20'] = (df['Close'] - df['sma_20']) / df['sma_20'] * 100
+
+# recent returns over different windows
+df['ret_5d'] = df['Close'].pct_change(5) * 100
+df['ret_20d'] = df['Close'].pct_change(20) * 100
+
+# volume change
+df['vol_chg'] = df['Volume'].pct_change() * 100
+
+# bollinger band width - wider bands = more volatility
+bb_std = df['Close'].rolling(20).std()
+df['bb_width'] = (bb_std * 4) / df['sma_20'] * 100
+
+# RSI - maybe overbought/oversold conditions affect volatility?
+delta = df['Close'].diff()
+gain = delta.where(delta > 0, 0).rolling(14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+df['rsi'] = 100 - (100 / (1 + gain/loss))
+
+# past volatility
+df['vol_5d'] = df['ret'].rolling(5).std()
+df['vol_10d'] = df['ret'].rolling(10).std()
+
+# daily range
+if 'range_pct' not in df.columns:
+    df['range_pct'] = (df['High'] - df['Low']) / df['Close'] * 100
+
+# drop NaNs from rolling calcs
+df_clean = df.dropna()
+print(f"After dropna: {len(df_clean)} rows")
+
+# features to use
+features = ['sma_20', 'sma_50', 'price_vs_sma20', 'ret_5d', 'ret_20d',
+            'vol_chg', 'bb_width', 'rsi', 'range_pct', 'vol_5d', 'vol_10d']
+
+X = df_clean[features]
+y = df_clean['vol_20d']
+
+# time-based split (can't use random split for time series!)
+n = len(df_clean)
+train_idx = int(n * 0.70)
+val_idx = int(n * 0.85)
+
+X_train, y_train = X.iloc[:train_idx], y.iloc[:train_idx]
+X_val, y_val = X.iloc[train_idx:val_idx], y.iloc[train_idx:val_idx]
+X_test, y_test = X.iloc[val_idx:], y.iloc[val_idx:]
+
+print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+
+# quick look at correlations
+corr = X_train.corrwith(y_train).sort_values(ascending=False)
+print(f"\nTop correlated features:")
+print(corr.head())
+
+# plot
+fig, ax = plt.subplots(2, 1, figsize=(10, 6))
+ax[0].plot(df_clean.index, df_clean['vol_20d'], color='red')
+ax[0].set_title('Target: 20-day volatility')
+corr.plot(kind='barh', ax=ax[1])
+ax[1].axvline(0, color='black', linestyle='--')
+ax[1].set_title('Feature correlations with target')
+plt.tight_layout()
+plt.show()
+
+# save splits
+for name, data in [('X_train', X_train), ('y_train', y_train), 
+                   ('X_val', X_val), ('y_val', y_val),
+                   ('X_test', X_test), ('y_test', y_test)]:
+    data.to_csv(f'{TICKER}_{name}.csv')
+
+print("\nSaved all splits, ready for modeling")

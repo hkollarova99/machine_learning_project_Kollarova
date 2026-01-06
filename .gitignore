@@ -1,0 +1,44 @@
+# ==========================
+# Python & Virtual Environments
+# ==========================
+_pycache_/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ==========================
+# Jupyter Notebooks
+# ==========================
+# We keep the notebooks (*.ipynb), but ignore the autosave/backup folders
+.ipynb_checkpoints
+/.ipynb_checkpoints/
+
+# ==========================
+# IDE & System Files
+# ==========================
+# Mac system files
+.DS_Store
+
+# VS Code & PyCharm settings (personal preferences shouldn't be shared)
+.vscode/
+.idea/
+
+# ==========================
+# Logs & Auto-generated folders
+# ==========================
+# Even if you keep data, you usually don't want these bulky logging folders
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+logs/
+
+# ==========================
+# Security
+# ==========================
+# Still hide your API keys!
+.env
