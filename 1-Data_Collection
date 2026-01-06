@@ -57,6 +57,7 @@ ax[1,1].axvline(0, color='red')
 ax[1,1].set_title('Return Distribution')
 
 plt.tight_layout()
+plt.savefig(f'{TICKER}_eda.png', dpi=150)
 plt.show()
 
 # some numbers for the report

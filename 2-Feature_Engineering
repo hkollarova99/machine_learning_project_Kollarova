@@ -90,6 +90,7 @@ corr.plot(kind='barh', ax=ax[1])
 ax[1].axvline(0, color='black', linestyle='--')
 ax[1].set_title('Feature correlations with target')
 plt.tight_layout()
+plt.savefig(f'{TICKER}_features.png', dpi=150)
 plt.show()
 
 # save splits
