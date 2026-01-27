@@ -1,0 +1,321 @@
+"""
+Phase 9 - Individual vs Combined Model Comparison (Part 2)
+Hana Kollárová, Jan 2026
+
+Final evaluation comparing:
+1. Individual RF models (one per stock) - trained on single stock data
+2. Combined RF model - trained on all 5 stocks together
+
+This addresses the key research question: Does a general model trained on 
+diverse stocks perform better or worse than stock-specific models?
+
+Evaluation is done on held-out TEST sets to ensure unbiased comparison.
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import joblib
+import warnings
+warnings.filterwarnings('ignore')
+
+TICKERS = ['AAPL', 'GOOGL', 'JPM', 'JNJ', 'XOM']
+
+
+def load_test_data(ticker):
+    """Load test data for a ticker."""
+    X_test = pd.read_csv(f'{ticker}_X_test.csv', index_col=0, parse_dates=True)
+    y_test = pd.read_csv(f'{ticker}_y_test.csv', index_col=0, parse_dates=True).squeeze()
+    return X_test, y_test
+
+
+# --- Load all models ---
+print("Loading trained models...")
+print("="*60)
+
+# Individual models
+individual_models = {}
+for ticker in TICKERS:
+    individual_models[ticker] = joblib.load(f'{ticker}_rf_individual.joblib')
+    print(f"Loaded individual model for {ticker}")
+
+# Combined model
+combined_model = joblib.load('combined_rf_model.joblib')
+print("Loaded combined model")
+
+# --- Evaluate on TEST sets ---
+print("\n" + "="*60)
+print("TEST SET EVALUATION (Final, unbiased evaluation)")
+print("="*60)
+
+individual_test_results = {}
+combined_test_results = {}
+test_data = {}
+
+for ticker in TICKERS:
+    X_test, y_test = load_test_data(ticker)
+    test_data[ticker] = {'X': X_test, 'y': y_test}
+    
+    # Individual model prediction
+    ind_pred = individual_models[ticker].predict(X_test)
+    individual_test_results[ticker] = {
+        'rmse': np.sqrt(mean_squared_error(y_test, ind_pred)),
+        'mae': mean_absolute_error(y_test, ind_pred),
+        'r2': r2_score(y_test, ind_pred),
+        'pred': ind_pred
+    }
+    
+    # Combined model prediction
+    comb_pred = combined_model.predict(X_test)
+    combined_test_results[ticker] = {
+        'rmse': np.sqrt(mean_squared_error(y_test, comb_pred)),
+        'mae': mean_absolute_error(y_test, comb_pred),
+        'r2': r2_score(y_test, comb_pred),
+        'pred': comb_pred
+    }
+
+# --- Results tables ---
+print("\nINDIVIDUAL MODELS (test set):")
+ind_df = pd.DataFrame({
+    t: {'RMSE': r['rmse'], 'MAE': r['mae'], 'R²': r['r2']} 
+    for t, r in individual_test_results.items()
+}).T
+print(ind_df.round(4))
+
+print("\nCOMBINED MODEL (test set):")
+comb_df = pd.DataFrame({
+    t: {'RMSE': r['rmse'], 'MAE': r['mae'], 'R²': r['r2']} 
+    for t, r in combined_test_results.items()
+}).T
+print(comb_df.round(4))
+
+# --- Comparison summary ---
+print("\n" + "="*60)
+print("HEAD-TO-HEAD COMPARISON")
+print("="*60)
+
+comparison = []
+for ticker in TICKERS:
+    ind_r2 = individual_test_results[ticker]['r2']
+    comb_r2 = combined_test_results[ticker]['r2']
+    diff = ind_r2 - comb_r2
+    winner = "Individual" if diff > 0 else "Combined" if diff < 0 else "Tie"
+    
+    comparison.append({
+        'Stock': ticker,
+        'Individual R²': ind_r2,
+        'Combined R²': comb_r2,
+        'Difference': diff,
+        'Winner': winner
+    })
+    
+    print(f"{ticker}: Individual R²={ind_r2:.4f}, Combined R²={comb_r2:.4f} → {winner} wins (diff={diff:+.4f})")
+
+comparison_df = pd.DataFrame(comparison)
+
+# count wins
+individual_wins = sum(1 for c in comparison if c['Winner'] == 'Individual')
+combined_wins = sum(1 for c in comparison if c['Winner'] == 'Combined')
+
+print(f"\nFinal score: Individual {individual_wins} - {combined_wins} Combined")
+
+# average performance
+avg_ind_r2 = np.mean([r['r2'] for r in individual_test_results.values()])
+avg_comb_r2 = np.mean([r['r2'] for r in combined_test_results.values()])
+print(f"\nAverage R² across stocks:")
+print(f"  Individual models: {avg_ind_r2:.4f}")
+print(f"  Combined model: {avg_comb_r2:.4f}")
+
+# --- Comprehensive visualization ---
+fig = plt.figure(figsize=(16, 14))
+fig.suptitle('Individual vs Combined Model Comparison - TEST SET', fontsize=16, fontweight='bold')
+
+# 1. R² comparison bar chart
+ax1 = plt.subplot(2, 3, 1)
+x = np.arange(len(TICKERS))
+width = 0.35
+ind_r2s = [individual_test_results[t]['r2'] for t in TICKERS]
+comb_r2s = [combined_test_results[t]['r2'] for t in TICKERS]
+bars1 = ax1.bar(x - width/2, ind_r2s, width, label='Individual', color='steelblue')
+bars2 = ax1.bar(x + width/2, comb_r2s, width, label='Combined', color='coral')
+ax1.set_xlabel('Stock')
+ax1.set_ylabel('R² Score')
+ax1.set_title('R² Comparison (Test Set)')
+ax1.set_xticks(x)
+ax1.set_xticklabels(TICKERS)
+ax1.legend()
+ax1.set_ylim(0, 1)
+ax1.axhline(avg_ind_r2, color='steelblue', linestyle='--', alpha=0.7, label=f'Avg Ind: {avg_ind_r2:.3f}')
+ax1.axhline(avg_comb_r2, color='coral', linestyle='--', alpha=0.7, label=f'Avg Comb: {avg_comb_r2:.3f}')
+
+# 2. RMSE comparison
+ax2 = plt.subplot(2, 3, 2)
+ind_rmses = [individual_test_results[t]['rmse'] for t in TICKERS]
+comb_rmses = [combined_test_results[t]['rmse'] for t in TICKERS]
+bars1 = ax2.bar(x - width/2, ind_rmses, width, label='Individual', color='steelblue')
+bars2 = ax2.bar(x + width/2, comb_rmses, width, label='Combined', color='coral')
+ax2.set_xlabel('Stock')
+ax2.set_ylabel('RMSE')
+ax2.set_title('RMSE Comparison (Test Set)')
+ax2.set_xticks(x)
+ax2.set_xticklabels(TICKERS)
+ax2.legend()
+
+# 3. Performance difference (Individual - Combined)
+ax3 = plt.subplot(2, 3, 3)
+diffs = [individual_test_results[t]['r2'] - combined_test_results[t]['r2'] for t in TICKERS]
+colors = ['green' if d > 0 else 'red' for d in diffs]
+bars = ax3.bar(TICKERS, diffs, color=colors)
+ax3.axhline(0, color='black', linestyle='-', linewidth=1)
+ax3.set_ylabel('R² Difference (Ind - Comb)')
+ax3.set_title('Performance Advantage\n(+ve = Individual better)')
+for bar, diff in zip(bars, diffs):
+    y_pos = bar.get_height() + 0.005 if diff >= 0 else bar.get_height() - 0.02
+    ax3.text(bar.get_x() + bar.get_width()/2, y_pos, f'{diff:+.3f}', 
+             ha='center', fontsize=9, fontweight='bold')
+
+# 4. Predicted vs Actual scatter (best performing stock with each model)
+ax4 = plt.subplot(2, 3, 4)
+best_ind_stock = TICKERS[np.argmax([individual_test_results[t]['r2'] for t in TICKERS])]
+y_true = test_data[best_ind_stock]['y']
+ind_pred = individual_test_results[best_ind_stock]['pred']
+comb_pred = combined_test_results[best_ind_stock]['pred']
+ax4.scatter(y_true, ind_pred, alpha=0.6, s=25, label=f'Individual (R²={individual_test_results[best_ind_stock]["r2"]:.3f})', color='steelblue')
+ax4.scatter(y_true, comb_pred, alpha=0.6, s=25, label=f'Combined (R²={combined_test_results[best_ind_stock]["r2"]:.3f})', color='coral')
+ax4.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'k--')
+ax4.set_xlabel('Actual Volatility')
+ax4.set_ylabel('Predicted Volatility')
+ax4.set_title(f'{best_ind_stock}: Pred vs Actual')
+ax4.legend(fontsize=8)
+ax4.grid(True, alpha=0.3)
+
+# 5. Time series: Actual vs predictions for one stock
+ax5 = plt.subplot(2, 3, 5)
+example_ticker = 'AAPL'  # use AAPL as reference
+y_true = test_data[example_ticker]['y']
+ind_pred = individual_test_results[example_ticker]['pred']
+comb_pred = combined_test_results[example_ticker]['pred']
+ax5.plot(y_true.index, y_true.values, label='Actual', linewidth=2, color='black')
+ax5.plot(y_true.index, ind_pred, label='Individual', alpha=0.8, linewidth=1.5, color='steelblue')
+ax5.plot(y_true.index, comb_pred, label='Combined', alpha=0.8, linewidth=1.5, color='coral')
+ax5.set_xlabel('Date')
+ax5.set_ylabel('Volatility')
+ax5.set_title(f'{example_ticker}: Actual vs Predicted (Test Set)')
+ax5.legend(fontsize=8)
+ax5.grid(True, alpha=0.3)
+
+# 6. Summary statistics table
+ax6 = plt.subplot(2, 3, 6)
+ax6.axis('off')
+summary_data = [
+    ['Metric', 'Individual', 'Combined', 'Difference'],
+    ['Avg R²', f'{avg_ind_r2:.4f}', f'{avg_comb_r2:.4f}', f'{avg_ind_r2-avg_comb_r2:+.4f}'],
+    ['Avg RMSE', f'{np.mean(ind_rmses):.4f}', f'{np.mean(comb_rmses):.4f}', 
+     f'{np.mean(ind_rmses)-np.mean(comb_rmses):+.4f}'],
+    ['Wins', str(individual_wins), str(combined_wins), '-'],
+    ['Best R²', f'{max(ind_r2s):.4f}', f'{max(comb_r2s):.4f}', '-'],
+    ['Worst R²', f'{min(ind_r2s):.4f}', f'{min(comb_r2s):.4f}', '-'],
+]
+table = ax6.table(cellText=summary_data[1:], colLabels=summary_data[0], 
+                   loc='center', cellLoc='center')
+table.auto_set_font_size(False)
+table.set_fontsize(11)
+table.scale(1.2, 2)
+ax6.set_title('Summary Statistics', fontsize=12, fontweight='bold', pad=20)
+
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.savefig('model_comparison.png', dpi=150)
+plt.show()
+
+# --- Save all results ---
+# Detailed comparison
+comparison_df.to_csv('model_comparison_results.csv', index=False)
+
+# Individual model test results
+ind_df.to_csv('individual_rf_test_results.csv')
+
+# Combined model test results
+comb_df.to_csv('combined_rf_test_results.csv')
+
+# --- Final analysis and conclusions ---
+print("\n" + "="*60)
+print("ANALYSIS & CONCLUSIONS")
+print("="*60)
+
+print(f"""
+RESEARCH QUESTION: Does a general model trained on multiple stocks perform 
+better than individual stock-specific models?
+
+FINDINGS:
+---------
+1. Head-to-head results: Individual models won {individual_wins}/{len(TICKERS)} times
+   Combined model won {combined_wins}/{len(TICKERS)} times
+
+2. Average performance:
+   - Individual models avg R²: {avg_ind_r2:.4f}
+   - Combined model avg R²: {avg_comb_r2:.4f}
+   - Difference: {avg_ind_r2 - avg_comb_r2:+.4f}
+""")
+
+# determine overall winner
+if avg_ind_r2 > avg_comb_r2 + 0.01:
+    overall_winner = "Individual (stock-specific) models"
+    conclusion = """Stock-specific models outperform the general model. This suggests that
+    each stock has unique volatility patterns that are better captured by 
+    dedicated models. The diverse training data in the combined model may 
+    introduce noise that hurts predictions for individual stocks."""
+elif avg_comb_r2 > avg_ind_r2 + 0.01:
+    overall_winner = "Combined (general) model"
+    conclusion = """The general model outperforms stock-specific models. This suggests that 
+    learning from diverse stocks helps the model generalize better, potentially
+    by learning more robust features that apply across different market sectors."""
+else:
+    overall_winner = "Roughly equivalent performance"
+    conclusion = """Both approaches show similar performance. This suggests that while 
+    stocks have some unique patterns, there are also common volatility dynamics
+    that both approaches can capture equally well."""
+
+print(f"""
+OVERALL WINNER: {overall_winner}
+
+CONCLUSION:
+{conclusion}
+
+RECOMMENDATIONS:
+---------------
+1. For production use: {"Use individual models for each stock" if "Individual" in overall_winner else "A combined model is sufficient and simpler to maintain"}
+2. For interpretability: Individual models may provide clearer insights
+   into what drives volatility for each specific stock
+3. For new stocks: The combined model can serve as a baseline when 
+   historical data is limited
+
+FILES SAVED:
+- model_comparison.png (comprehensive visualization)
+- model_comparison_results.csv (detailed per-stock comparison)
+- individual_rf_test_results.csv (individual models test performance)
+- combined_rf_test_results.csv (combined model test performance)
+""")
+
+# Per-stock insights
+print("\n" + "="*60)
+print("PER-STOCK INSIGHTS")
+print("="*60)
+
+for ticker in TICKERS:
+    ind_r2 = individual_test_results[ticker]['r2']
+    comb_r2 = combined_test_results[ticker]['r2']
+    diff = ind_r2 - comb_r2
+    
+    if diff > 0.05:
+        insight = "Strong advantage for individual model - unique patterns in this stock"
+    elif diff > 0:
+        insight = "Slight advantage for individual model"
+    elif diff > -0.05:
+        insight = "Slight advantage for combined model"
+    else:
+        insight = "Strong advantage for combined model - benefits from cross-stock learning"
+    
+    print(f"{ticker}: {insight}")
+    print(f"  Individual R²: {ind_r2:.4f}, Combined R²: {comb_r2:.4f}, Diff: {diff:+.4f}")
+
