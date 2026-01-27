@@ -148,60 +148,100 @@ combined_summary.columns = ['RMSE', 'MAE', 'R²']
 combined_summary.to_csv('combined_rf_validation_results.csv')
 
 # --- Visualization ---
-fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-fig.suptitle('Combined RF Model - Performance Analysis', fontsize=14)
+fig = plt.figure(figsize=(14, 10))
+fig.suptitle('Combined RF Model - Performance Analysis', fontsize=16, fontweight='bold', y=0.98)
 
-# R² per stock (combined model)
-ax = axes[0, 0]
+# Use GridSpec for better layout control
+from matplotlib.gridspec import GridSpec
+gs = GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.3)
+
+# Color palette
+stock_colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#3B1F2B']
+
+# 1. R² per stock (top left, spans 1 column)
+ax1 = fig.add_subplot(gs[0, 0])
 r2_scores = [combined_results[t]['r2'] for t in TICKERS]
-bars = ax.bar(TICKERS, r2_scores, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
-ax.set_ylabel('R² Score')
-ax.set_title('Combined Model: Validation R² per Stock')
-ax.set_ylim(0, 1)
-ax.axhline(best_score, color='red', linestyle='--', label=f'Overall R²: {best_score:.3f}')
-ax.legend()
+bars = ax1.bar(TICKERS, r2_scores, color=stock_colors, edgecolor='white', linewidth=1.2)
+ax1.set_ylabel('R² Score', fontsize=10)
+ax1.set_title('(a) Validation R² per Stock', fontsize=11, fontweight='bold')
+ax1.axhline(0, color='black', linestyle='-', linewidth=0.8)
+ax1.axhline(best_score, color='red', linestyle='--', linewidth=1.5, 
+            label=f'Overall: {best_score:.3f}')
+ax1.legend(loc='lower right', fontsize=9)
+ax1.set_ylim(min(r2_scores) - 0.3, max(max(r2_scores), best_score) + 0.15)
+ax1.grid(axis='y', alpha=0.3)
 for bar, score in zip(bars, r2_scores):
-    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, 
-            f'{score:.3f}', ha='center', fontsize=10)
+    y_pos = bar.get_height() + 0.05 if score >= 0 else bar.get_height() - 0.15
+    ax1.text(bar.get_x() + bar.get_width()/2, y_pos, f'{score:.3f}', 
+             ha='center', fontsize=9, fontweight='bold')
 
-# RMSE per stock
-ax = axes[0, 1]
+# 2. RMSE per stock (top middle)
+ax2 = fig.add_subplot(gs[0, 1])
 rmse_scores = [combined_results[t]['rmse'] for t in TICKERS]
-bars = ax.bar(TICKERS, rmse_scores, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
-ax.set_ylabel('RMSE')
-ax.set_title('Combined Model: Validation RMSE per Stock')
+bars = ax2.bar(TICKERS, rmse_scores, color=stock_colors, edgecolor='white', linewidth=1.2)
+ax2.set_ylabel('RMSE', fontsize=10)
+ax2.set_title('(b) Validation RMSE per Stock', fontsize=11, fontweight='bold')
+ax2.grid(axis='y', alpha=0.3)
 for bar, score in zip(bars, rmse_scores):
-    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
-            f'{score:.3f}', ha='center', fontsize=10)
+    ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
+             f'{score:.3f}', ha='center', fontsize=9, fontweight='bold')
 
-# Feature importance
-ax = axes[1, 0]
+# 3. Summary table (top right)
+ax3 = fig.add_subplot(gs[0, 2])
+ax3.axis('off')
+summary_data = [
+    ['Stock', 'R²', 'RMSE', 'MAE'],
+]
+for t in TICKERS:
+    summary_data.append([t, f"{combined_results[t]['r2']:.3f}", 
+                         f"{combined_results[t]['rmse']:.3f}",
+                         f"{combined_results[t]['mae']:.3f}"])
+summary_data.append(['Overall', f'{best_score:.3f}', '-', '-'])
+
+table = ax3.table(cellText=summary_data[1:], colLabels=summary_data[0],
+                   loc='center', cellLoc='center',
+                   colColours=['#f0f0f0']*4)
+table.auto_set_font_size(False)
+table.set_fontsize(10)
+table.scale(1.1, 1.8)
+ax3.set_title('(c) Summary Statistics', fontsize=11, fontweight='bold', pad=15)
+
+# 4. Feature importance (bottom left, spans 1.5 columns)
+ax4 = fig.add_subplot(gs[1, 0:2])
 feature_names = X_train_combined.columns
 imp = pd.Series(best_rf.feature_importances_, index=feature_names).sort_values()
-imp.plot(kind='barh', ax=ax, color='steelblue')
-ax.set_xlabel('Importance')
-ax.set_title('Combined Model: Feature Importance')
+colors_imp = ['#2E86AB' if v < imp.max() * 0.5 else '#C73E1D' for v in imp.values]
+bars = ax4.barh(imp.index, imp.values, color=colors_imp, edgecolor='white', linewidth=0.8)
+ax4.set_xlabel('Feature Importance', fontsize=10)
+ax4.set_title('(d) Combined Model Feature Importance', fontsize=11, fontweight='bold')
+ax4.grid(axis='x', alpha=0.3)
+# add values on bars
+for bar, val in zip(bars, imp.values):
+    ax4.text(val + 0.005, bar.get_y() + bar.get_height()/2, 
+             f'{val:.3f}', va='center', fontsize=9)
 
-# Predicted vs actual (all stocks combined)
-ax = axes[1, 1]
-colors = {'AAPL': '#1f77b4', 'GOOGL': '#ff7f0e', 'JPM': '#2ca02c', 
-          'JNJ': '#d62728', 'XOM': '#9467bd'}
+# 5. Predicted vs actual scatter (bottom right)
+ax5 = fig.add_subplot(gs[1, 2])
+colors_scatter = {'AAPL': '#2E86AB', 'GOOGL': '#A23B72', 'JPM': '#F18F01', 
+                  'JNJ': '#C73E1D', 'XOM': '#3B1F2B'}
 for ticker in TICKERS:
     X_val = stock_data[ticker]['X_val']
     y_val = stock_data[ticker]['y_val']
     pred = best_rf.predict(X_val)
-    ax.scatter(y_val, pred, alpha=0.5, s=20, label=ticker, color=colors[ticker])
+    ax5.scatter(y_val, pred, alpha=0.6, s=30, label=ticker, 
+                color=colors_scatter[ticker], edgecolors='white', linewidth=0.3)
 
 # diagonal line
 all_y = pd.concat([stock_data[t]['y_val'] for t in TICKERS])
-ax.plot([all_y.min(), all_y.max()], [all_y.min(), all_y.max()], 'k--')
-ax.set_xlabel('Actual Volatility')
-ax.set_ylabel('Predicted Volatility')
-ax.set_title('Predicted vs Actual (All Stocks)')
-ax.legend(fontsize=8)
+ax5.plot([all_y.min(), all_y.max()], [all_y.min(), all_y.max()], 
+         'k--', linewidth=1.5, label='Perfect fit')
+ax5.set_xlabel('Actual Volatility', fontsize=10)
+ax5.set_ylabel('Predicted Volatility', fontsize=10)
+ax5.set_title('(e) Predicted vs Actual', fontsize=11, fontweight='bold')
+ax5.legend(fontsize=8, loc='upper left')
+ax5.grid(True, alpha=0.3)
 
-plt.tight_layout()
-plt.savefig('combined_rf_model.png', dpi=150)
+plt.savefig('combined_rf_model.png', dpi=150, bbox_inches='tight', facecolor='white')
 plt.show()
 
 # --- Summary statistics ---

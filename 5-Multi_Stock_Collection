@@ -107,13 +107,13 @@ for ticker in TICKERS.keys():
     df = all_stocks[ticker]
     stats.append({
         'Ticker': ticker,
-        'Avg Return': df['ret'].mean(),
-        'Volatility': df['ret'].std(),
-        'Sharpe': df['ret'].mean() / df['ret'].std() * np.sqrt(252) if df['ret'].std() > 0 else 0
+        'Avg Return': round(df['ret'].mean(), 3),
+        'Volatility': round(df['ret'].std(), 3),
+        'Sharpe': round(df['ret'].mean() / df['ret'].std() * np.sqrt(252), 3) if df['ret'].std() > 0 else 0
     })
 stats_df = pd.DataFrame(stats)
 ax.axis('off')
-table = ax.table(cellText=np.round(stats_df.values, 3), 
+table = ax.table(cellText=stats_df.values, 
                   colLabels=stats_df.columns,
                   loc='center', 
                   cellLoc='center')
