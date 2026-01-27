@@ -1,0 +1,191 @@
+"""
+Phase 6 - Feature Engineering for All Stocks (Part 2)
+Hana Kollárová, Jan 2026
+
+Creating features for all 5 stocks (AAPL + 4 new ones).
+Same features as Phase 2 for consistency. Using AAPL's time-based splits 
+as reference to ensure fair comparison (all stocks use same time periods).
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings('ignore')
+
+# All 5 stocks (AAPL + 4 new)
+TICKERS = ['AAPL', 'GOOGL', 'JPM', 'JNJ', 'XOM']
+
+# Feature list (same as Phase 2)
+FEATURES = ['sma_20', 'sma_50', 'price_vs_sma20', 'ret_5d', 'ret_20d',
+            'vol_chg', 'bb_width', 'rsi', 'range_pct', 'vol_5d', 'vol_10d']
+
+
+def create_features(df):
+    """Create all features for a stock dataframe. Same logic as Phase 2."""
+    
+    # make sure we have returns
+    if 'ret' not in df.columns:
+        df['ret'] = df['Close'].pct_change() * 100
+    
+    # TARGET: 20-day volatility
+    df['vol_20d'] = df['ret'].rolling(20).std()
+    
+    # FEATURES
+    # moving averages
+    df['sma_20'] = df['Close'].rolling(20).mean()
+    df['sma_50'] = df['Close'].rolling(50).mean()
+    
+    # price deviation from MA
+    df['price_vs_sma20'] = (df['Close'] - df['sma_20']) / df['sma_20'] * 100
+    
+    # multi-day returns
+    df['ret_5d'] = df['Close'].pct_change(5) * 100
+    df['ret_20d'] = df['Close'].pct_change(20) * 100
+    
+    # volume change
+    df['vol_chg'] = df['Volume'].pct_change() * 100
+    
+    # bollinger band width
+    bb_std = df['Close'].rolling(20).std()
+    df['bb_width'] = (bb_std * 4) / df['sma_20'] * 100
+    
+    # RSI
+    delta = df['Close'].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    df['rsi'] = 100 - (100 / (1 + gain/loss))
+    
+    # past volatility
+    df['vol_5d'] = df['ret'].rolling(5).std()
+    df['vol_10d'] = df['ret'].rolling(10).std()
+    
+    # daily range
+    if 'range_pct' not in df.columns:
+        df['range_pct'] = (df['High'] - df['Low']) / df['Close'] * 100
+    
+    return df
+
+
+# --- Process all stocks ---
+all_data = {}
+print("Processing features for all stocks...")
+
+for ticker in TICKERS:
+    print(f"\n{'='*40}")
+    print(f"Processing {ticker}...")
+    
+    df = pd.read_csv(f'{ticker}_stock_data.csv', index_col=0, parse_dates=True)
+    print(f"Loaded {len(df)} rows")
+    
+    # create features
+    df = create_features(df)
+    
+    # drop NaNs from rolling calculations
+    df_clean = df.dropna()
+    print(f"After dropna: {len(df_clean)} rows")
+    
+    all_data[ticker] = df_clean
+
+# --- Use AAPL's date splits as reference ---
+# This ensures all stocks use the same time periods for train/val/test
+# which is crucial for fair comparison
+aapl_data = all_data['AAPL']
+n_aapl = len(aapl_data)
+train_idx = int(n_aapl * 0.70)
+val_idx = int(n_aapl * 0.85)
+
+train_end_date = aapl_data.index[train_idx - 1]
+val_end_date = aapl_data.index[val_idx - 1]
+
+print(f"\n{'='*50}")
+print("Using AAPL's date-based splits as reference:")
+print(f"Train: up to {train_end_date.strftime('%Y-%m-%d')}")
+print(f"Val: {train_end_date.strftime('%Y-%m-%d')} to {val_end_date.strftime('%Y-%m-%d')}")
+print(f"Test: after {val_end_date.strftime('%Y-%m-%d')}")
+
+# --- Create and save splits for all stocks ---
+for ticker in TICKERS:
+    print(f"\n{ticker}:")
+    df = all_data[ticker]
+    
+    # split by dates (not by position)
+    train_mask = df.index <= train_end_date
+    val_mask = (df.index > train_end_date) & (df.index <= val_end_date)
+    test_mask = df.index > val_end_date
+    
+    X = df[FEATURES]
+    y = df['vol_20d']
+    
+    X_train, y_train = X[train_mask], y[train_mask]
+    X_val, y_val = X[val_mask], y[val_mask]
+    X_test, y_test = X[test_mask], y[test_mask]
+    
+    print(f"  Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+    
+    # save splits (keeping original AAPL files, adding new stocks)
+    if ticker != 'AAPL':  # don't overwrite original AAPL files
+        for name, data in [('X_train', X_train), ('y_train', y_train),
+                           ('X_val', X_val), ('y_val', y_val),
+                           ('X_test', X_test), ('y_test', y_test)]:
+            data.to_csv(f'{ticker}_{name}.csv')
+        print(f"  Saved {ticker} splits")
+
+# --- Visualization: Feature correlations across stocks ---
+fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+fig.suptitle('Feature Correlations with Target (vol_20d) by Stock', fontsize=14)
+
+for i, ticker in enumerate(TICKERS):
+    ax = axes[i // 3, i % 3]
+    df = all_data[ticker]
+    
+    X = df[FEATURES]
+    y = df['vol_20d']
+    corr = X.corrwith(y).sort_values(ascending=True)
+    
+    colors = ['green' if c > 0 else 'red' for c in corr]
+    corr.plot(kind='barh', ax=ax, color=colors)
+    ax.axvline(0, color='black', linestyle='--')
+    ax.set_title(f'{ticker}')
+    ax.set_xlim(-0.5, 1)
+
+# hide last subplot if odd number of stocks
+if len(TICKERS) % 2 == 1:
+    axes[-1, -1].axis('off')
+
+plt.tight_layout()
+plt.savefig('multi_stock_features.png', dpi=150)
+plt.show()
+
+# --- Summary statistics across stocks ---
+print("\n" + "="*50)
+print("Target variable (vol_20d) statistics:")
+stats = []
+for ticker in TICKERS:
+    df = all_data[ticker]
+    stats.append({
+        'Ticker': ticker,
+        'Mean': df['vol_20d'].mean(),
+        'Std': df['vol_20d'].std(),
+        'Min': df['vol_20d'].min(),
+        'Max': df['vol_20d'].max()
+    })
+stats_df = pd.DataFrame(stats)
+print(stats_df.round(3).to_string(index=False))
+
+# check which features are most consistently correlated
+print("\n" + "="*50)
+print("Average feature correlation across all stocks:")
+corrs = []
+for ticker in TICKERS:
+    df = all_data[ticker]
+    corr = df[FEATURES].corrwith(df['vol_20d'])
+    corrs.append(corr)
+avg_corr = pd.concat(corrs, axis=1).mean(axis=1).sort_values(ascending=False)
+print(avg_corr.round(3))
+
+print(f"\n{'='*50}")
+print("Feature engineering complete!")
+print(f"Processed stocks: {TICKERS}")
+print("Files saved: [TICKER]_X_train.csv, etc., multi_stock_features.png")
+

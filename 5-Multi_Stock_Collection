@@ -1,0 +1,149 @@
+"""
+Phase 5 - Multi-Stock Data Collection (Part 2)
+Hana Kollárová, Jan 2026
+
+Downloading additional stock data from diverse sectors for comparative analysis.
+Stocks: GOOGL (Tech), JPM (Finance), JNJ (Healthcare), XOM (Energy)
+Same time period as AAPL for consistency.
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import yfinance as yf
+import warnings
+warnings.filterwarnings('ignore')
+
+# Same time period as AAPL
+START = '2022-01-01'
+END = '2024-12-31'
+
+# 4 additional stocks from different sectors
+# Rationale: diverse sectors capture different market dynamics
+TICKERS = {
+    'GOOGL': 'Technology (Communication)',
+    'JPM': 'Finance',
+    'JNJ': 'Healthcare',
+    'XOM': 'Energy'
+}
+
+all_stocks = {}
+
+for ticker, sector in TICKERS.items():
+    print(f"\n{'='*50}")
+    print(f"Downloading {ticker} ({sector})...")
+    
+    df = yf.download(ticker, start=START, end=END, progress=False)
+    
+    # handle multi-index columns (yfinance quirk)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    
+    print(f"Got {len(df)} trading days")
+    
+    # check for missing data
+    missing = df.isnull().sum().sum()
+    if missing > 0:
+        print(f"WARNING: {missing} missing values found, filling forward")
+        df = df.ffill()
+    
+    # daily returns
+    df['ret'] = df['Close'].pct_change() * 100
+    
+    # daily range as %
+    df['range_pct'] = (df['High'] - df['Low']) / df['Close'] * 100
+    
+    # quick stats
+    print(f"Price range: ${df['Close'].min():.2f} - ${df['Close'].max():.2f}")
+    print(f"Avg daily return: {df['ret'].mean():.3f}%")
+    print(f"Volatility (std): {df['ret'].std():.3f}%")
+    
+    all_stocks[ticker] = df
+    
+    # save individual stock data
+    df.to_csv(f'{ticker}_stock_data.csv')
+    print(f"Saved to {ticker}_stock_data.csv")
+
+# --- Summary visualization ---
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+fig.suptitle('Additional Stocks - Exploratory Data Analysis', fontsize=14)
+
+# Normalized price comparison
+ax = axes[0, 0]
+for ticker in TICKERS.keys():
+    df = all_stocks[ticker]
+    norm_price = df['Close'] / df['Close'].iloc[0] * 100
+    ax.plot(norm_price, label=ticker, linewidth=1.2)
+ax.legend()
+ax.set_title('Normalized Price (Base=100)')
+ax.set_ylabel('Normalized Price')
+ax.grid(True, alpha=0.3)
+
+# Volatility comparison (rolling 20d std)
+ax = axes[0, 1]
+for ticker in TICKERS.keys():
+    df = all_stocks[ticker]
+    vol = df['ret'].rolling(20).std()
+    ax.plot(vol, label=ticker, alpha=0.8, linewidth=1)
+ax.legend()
+ax.set_title('20-Day Rolling Volatility')
+ax.set_ylabel('Volatility (%)')
+ax.grid(True, alpha=0.3)
+
+# Return distribution comparison
+ax = axes[1, 0]
+for ticker in TICKERS.keys():
+    df = all_stocks[ticker]
+    ax.hist(df['ret'].dropna(), bins=50, alpha=0.4, label=ticker)
+ax.axvline(0, color='black', linestyle='--')
+ax.legend()
+ax.set_title('Daily Return Distribution')
+ax.set_xlabel('Daily Return (%)')
+
+# Summary statistics
+ax = axes[1, 1]
+stats = []
+for ticker in TICKERS.keys():
+    df = all_stocks[ticker]
+    stats.append({
+        'Ticker': ticker,
+        'Avg Return': df['ret'].mean(),
+        'Volatility': df['ret'].std(),
+        'Sharpe': df['ret'].mean() / df['ret'].std() * np.sqrt(252) if df['ret'].std() > 0 else 0
+    })
+stats_df = pd.DataFrame(stats)
+ax.axis('off')
+table = ax.table(cellText=np.round(stats_df.values, 3), 
+                  colLabels=stats_df.columns,
+                  loc='center', 
+                  cellLoc='center')
+table.auto_set_font_size(False)
+table.set_fontsize(10)
+table.scale(1.2, 1.8)
+ax.set_title('Summary Statistics', pad=20)
+
+plt.tight_layout()
+plt.savefig('multi_stock_eda.png', dpi=150)
+plt.show()
+
+# --- Correlation between stocks ---
+print("\n" + "="*50)
+print("Cross-stock return correlations:")
+returns_df = pd.DataFrame({t: all_stocks[t]['ret'] for t in TICKERS.keys()})
+print(returns_df.corr().round(3))
+
+# save combined dataset info
+summary = pd.DataFrame([{
+    'Ticker': t,
+    'Sector': TICKERS[t],
+    'Days': len(all_stocks[t]),
+    'Start': all_stocks[t].index[0].strftime('%Y-%m-%d'),
+    'End': all_stocks[t].index[-1].strftime('%Y-%m-%d')
+} for t in TICKERS.keys()])
+summary.to_csv('multi_stock_summary.csv', index=False)
+
+print(f"\n{'='*50}")
+print("Data collection complete!")
+print(f"Stocks collected: {list(TICKERS.keys())}")
+print("Files saved: [TICKER]_stock_data.csv, multi_stock_eda.png, multi_stock_summary.csv")
+

@@ -1,0 +1,225 @@
+"""
+Phase 8 - Combined (General) Random Forest Model (Part 2)
+Hana Kollárová, Jan 2026
+
+Training a single Random Forest model on ALL 5 stocks combined.
+This tests whether a general model can learn cross-stock patterns that 
+generalize better than stock-specific models.
+
+Key question: Does training on more diverse data improve or hurt performance
+on individual stocks?
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import joblib
+import warnings
+warnings.filterwarnings('ignore')
+
+TICKERS = ['AAPL', 'GOOGL', 'JPM', 'JNJ', 'XOM']
+
+# Same hyperparameter grid as individual models
+TREES_GRID = [200, 300, 500]
+DEPTH_GRID = [5, 10, 20, None]
+MIN_LEAF_GRID = [1, 2, 5]
+
+
+def load_data(ticker):
+    """Load train/val/test data for a ticker."""
+    X_train = pd.read_csv(f'{ticker}_X_train.csv', index_col=0, parse_dates=True)
+    y_train = pd.read_csv(f'{ticker}_y_train.csv', index_col=0, parse_dates=True).squeeze()
+    X_val = pd.read_csv(f'{ticker}_X_val.csv', index_col=0, parse_dates=True)
+    y_val = pd.read_csv(f'{ticker}_y_val.csv', index_col=0, parse_dates=True).squeeze()
+    X_test = pd.read_csv(f'{ticker}_X_test.csv', index_col=0, parse_dates=True)
+    y_test = pd.read_csv(f'{ticker}_y_test.csv', index_col=0, parse_dates=True).squeeze()
+    return X_train, y_train, X_val, y_val, X_test, y_test
+
+
+# --- Load and combine all data ---
+print("Loading data for all stocks...")
+print("="*60)
+
+all_X_train, all_y_train = [], []
+all_X_val, all_y_val = [], []
+stock_data = {}  # store individual data for later per-stock evaluation
+
+for ticker in TICKERS:
+    X_train, y_train, X_val, y_val, X_test, y_test = load_data(ticker)
+    
+    # add ticker identifier as a feature (helps model learn stock-specific patterns)
+    # Note: We don't use this for final model, but it's useful for analysis
+    stock_data[ticker] = {
+        'X_train': X_train, 'y_train': y_train,
+        'X_val': X_val, 'y_val': y_val,
+        'X_test': X_test, 'y_test': y_test
+    }
+    
+    all_X_train.append(X_train)
+    all_y_train.append(y_train)
+    all_X_val.append(X_val)
+    all_y_val.append(y_val)
+    
+    print(f"{ticker}: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}")
+
+# combine training and validation data
+X_train_combined = pd.concat(all_X_train, axis=0)
+y_train_combined = pd.concat(all_y_train, axis=0)
+X_val_combined = pd.concat(all_X_val, axis=0)
+y_val_combined = pd.concat(all_y_val, axis=0)
+
+print(f"\nCombined: train={len(X_train_combined)}, val={len(X_val_combined)}")
+
+# shuffle training data (important when combining time series from multiple sources)
+shuffle_idx = np.random.RandomState(42).permutation(len(X_train_combined))
+X_train_combined = X_train_combined.iloc[shuffle_idx]
+y_train_combined = y_train_combined.iloc[shuffle_idx]
+
+# --- Train combined model ---
+print("\n" + "="*60)
+print("Training COMBINED Random Forest model...")
+print("This may take a while due to larger dataset...")
+
+best_rf, best_score, best_params = None, -999, None
+total_combos = len(TREES_GRID) * len(DEPTH_GRID) * len(MIN_LEAF_GRID)
+combo_count = 0
+
+for trees in TREES_GRID:
+    for depth in DEPTH_GRID:
+        for min_leaf in MIN_LEAF_GRID:
+            combo_count += 1
+            if combo_count % 10 == 0:
+                print(f"  Progress: {combo_count}/{total_combos}")
+            
+            rf = RandomForestRegressor(
+                n_estimators=trees,
+                max_depth=depth,
+                min_samples_leaf=min_leaf,
+                random_state=42,
+                n_jobs=-1
+            )
+            rf.fit(X_train_combined, y_train_combined)
+            
+            # evaluate on combined validation set
+            score = r2_score(y_val_combined, rf.predict(X_val_combined))
+            
+            if score > best_score:
+                best_score = score
+                best_rf = rf
+                best_params = {'trees': trees, 'depth': depth, 'min_leaf': min_leaf}
+
+print(f"\nBest combined model params:")
+print(f"  Trees: {best_params['trees']}")
+print(f"  Max depth: {best_params['depth']}")
+print(f"  Min samples leaf: {best_params['min_leaf']}")
+print(f"  Overall validation R²: {best_score:.4f}")
+
+# save combined model
+joblib.dump(best_rf, 'combined_rf_model.joblib')
+print("\nModel saved: combined_rf_model.joblib")
+
+# --- Evaluate combined model on each stock separately ---
+print("\n" + "="*60)
+print("COMBINED MODEL - PER-STOCK VALIDATION PERFORMANCE")
+print("="*60)
+
+combined_results = {}
+
+for ticker in TICKERS:
+    X_val = stock_data[ticker]['X_val']
+    y_val = stock_data[ticker]['y_val']
+    
+    pred = best_rf.predict(X_val)
+    
+    combined_results[ticker] = {
+        'rmse': np.sqrt(mean_squared_error(y_val, pred)),
+        'mae': mean_absolute_error(y_val, pred),
+        'r2': r2_score(y_val, pred)
+    }
+    
+    print(f"{ticker}: R²={combined_results[ticker]['r2']:.4f}, "
+          f"RMSE={combined_results[ticker]['rmse']:.4f}")
+
+# Save results
+combined_summary = pd.DataFrame(combined_results).T
+combined_summary.columns = ['RMSE', 'MAE', 'R²']
+combined_summary.to_csv('combined_rf_validation_results.csv')
+
+# --- Visualization ---
+fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+fig.suptitle('Combined RF Model - Performance Analysis', fontsize=14)
+
+# R² per stock (combined model)
+ax = axes[0, 0]
+r2_scores = [combined_results[t]['r2'] for t in TICKERS]
+bars = ax.bar(TICKERS, r2_scores, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+ax.set_ylabel('R² Score')
+ax.set_title('Combined Model: Validation R² per Stock')
+ax.set_ylim(0, 1)
+ax.axhline(best_score, color='red', linestyle='--', label=f'Overall R²: {best_score:.3f}')
+ax.legend()
+for bar, score in zip(bars, r2_scores):
+    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, 
+            f'{score:.3f}', ha='center', fontsize=10)
+
+# RMSE per stock
+ax = axes[0, 1]
+rmse_scores = [combined_results[t]['rmse'] for t in TICKERS]
+bars = ax.bar(TICKERS, rmse_scores, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+ax.set_ylabel('RMSE')
+ax.set_title('Combined Model: Validation RMSE per Stock')
+for bar, score in zip(bars, rmse_scores):
+    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
+            f'{score:.3f}', ha='center', fontsize=10)
+
+# Feature importance
+ax = axes[1, 0]
+feature_names = X_train_combined.columns
+imp = pd.Series(best_rf.feature_importances_, index=feature_names).sort_values()
+imp.plot(kind='barh', ax=ax, color='steelblue')
+ax.set_xlabel('Importance')
+ax.set_title('Combined Model: Feature Importance')
+
+# Predicted vs actual (all stocks combined)
+ax = axes[1, 1]
+colors = {'AAPL': '#1f77b4', 'GOOGL': '#ff7f0e', 'JPM': '#2ca02c', 
+          'JNJ': '#d62728', 'XOM': '#9467bd'}
+for ticker in TICKERS:
+    X_val = stock_data[ticker]['X_val']
+    y_val = stock_data[ticker]['y_val']
+    pred = best_rf.predict(X_val)
+    ax.scatter(y_val, pred, alpha=0.5, s=20, label=ticker, color=colors[ticker])
+
+# diagonal line
+all_y = pd.concat([stock_data[t]['y_val'] for t in TICKERS])
+ax.plot([all_y.min(), all_y.max()], [all_y.min(), all_y.max()], 'k--')
+ax.set_xlabel('Actual Volatility')
+ax.set_ylabel('Predicted Volatility')
+ax.set_title('Predicted vs Actual (All Stocks)')
+ax.legend(fontsize=8)
+
+plt.tight_layout()
+plt.savefig('combined_rf_model.png', dpi=150)
+plt.show()
+
+# --- Summary statistics ---
+print("\n" + "="*60)
+print("COMBINED MODEL SUMMARY")
+print("="*60)
+print(f"\nTraining data size: {len(X_train_combined)} samples from {len(TICKERS)} stocks")
+print(f"Best hyperparameters: {best_params}")
+print(f"\nOverall validation R²: {best_score:.4f}")
+print(f"Average per-stock R²: {np.mean(r2_scores):.4f}")
+print(f"R² std across stocks: {np.std(r2_scores):.4f}")
+
+best_stock = TICKERS[np.argmax(r2_scores)]
+worst_stock = TICKERS[np.argmin(r2_scores)]
+print(f"\nBest performing stock: {best_stock} (R²={max(r2_scores):.4f})")
+print(f"Worst performing stock: {worst_stock} (R²={min(r2_scores):.4f})")
+
+print(f"\n{'='*60}")
+print("Combined model training complete!")
+print("Files saved: combined_rf_model.joblib, combined_rf_validation_results.csv, combined_rf_model.png")
+

@@ -1,0 +1,192 @@
+"""
+Phase 7 - Individual Random Forest Models (Part 2)
+Hana Kollárová, Jan 2026
+
+Training one Random Forest model per stock. This will serve as the baseline
+for comparison against the general (combined) model trained on all stocks.
+
+Hypothesis: Stock-specific models might capture unique patterns in each stock's 
+volatility behavior, potentially outperforming a general model.
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import joblib
+import warnings
+warnings.filterwarnings('ignore')
+
+TICKERS = ['AAPL', 'GOOGL', 'JPM', 'JNJ', 'XOM']
+
+# Hyperparameter grid (same as Phase 3 for fair comparison)
+TREES_GRID = [200, 300, 500]
+DEPTH_GRID = [5, 10, 20, None]
+MIN_LEAF_GRID = [1, 2, 5]
+
+
+def load_data(ticker):
+    """Load train/val/test data for a ticker."""
+    X_train = pd.read_csv(f'{ticker}_X_train.csv', index_col=0, parse_dates=True)
+    y_train = pd.read_csv(f'{ticker}_y_train.csv', index_col=0, parse_dates=True).squeeze()
+    X_val = pd.read_csv(f'{ticker}_X_val.csv', index_col=0, parse_dates=True)
+    y_val = pd.read_csv(f'{ticker}_y_val.csv', index_col=0, parse_dates=True).squeeze()
+    X_test = pd.read_csv(f'{ticker}_X_test.csv', index_col=0, parse_dates=True)
+    y_test = pd.read_csv(f'{ticker}_y_test.csv', index_col=0, parse_dates=True).squeeze()
+    return X_train, y_train, X_val, y_val, X_test, y_test
+
+
+def train_rf(X_train, y_train, X_val, y_val, ticker):
+    """Train RF with hyperparameter search, return best model and params."""
+    best_rf, best_score, best_params = None, -999, None
+    
+    total_combos = len(TREES_GRID) * len(DEPTH_GRID) * len(MIN_LEAF_GRID)
+    combo_count = 0
+    
+    for trees in TREES_GRID:
+        for depth in DEPTH_GRID:
+            for min_leaf in MIN_LEAF_GRID:
+                combo_count += 1
+                rf = RandomForestRegressor(
+                    n_estimators=trees, 
+                    max_depth=depth,
+                    min_samples_leaf=min_leaf,
+                    random_state=42,
+                    n_jobs=-1
+                )
+                rf.fit(X_train, y_train)
+                score = r2_score(y_val, rf.predict(X_val))
+                
+                if score > best_score:
+                    best_score = score
+                    best_rf = rf
+                    best_params = {'trees': trees, 'depth': depth, 'min_leaf': min_leaf}
+    
+    return best_rf, best_params, best_score
+
+
+# --- Train individual models ---
+individual_models = {}
+individual_results = {}
+
+print("Training individual Random Forest models per stock...")
+print("="*60)
+
+for ticker in TICKERS:
+    print(f"\n{'='*40}")
+    print(f"Training model for {ticker}...")
+    
+    # load data
+    X_train, y_train, X_val, y_val, X_test, y_test = load_data(ticker)
+    print(f"  Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+    
+    # train with hyperparameter search
+    best_rf, best_params, val_r2 = train_rf(X_train, y_train, X_val, y_val, ticker)
+    
+    print(f"  Best params: trees={best_params['trees']}, depth={best_params['depth']}, min_leaf={best_params['min_leaf']}")
+    print(f"  Validation R²: {val_r2:.4f}")
+    
+    # evaluate on validation set
+    val_pred = best_rf.predict(X_val)
+    
+    individual_models[ticker] = best_rf
+    individual_results[ticker] = {
+        'params': best_params,
+        'val_rmse': np.sqrt(mean_squared_error(y_val, val_pred)),
+        'val_mae': mean_absolute_error(y_val, val_pred),
+        'val_r2': r2_score(y_val, val_pred)
+    }
+    
+    # save model
+    joblib.dump(best_rf, f'{ticker}_rf_individual.joblib')
+    print(f"  Model saved: {ticker}_rf_individual.joblib")
+
+# --- Summary of validation performance ---
+print("\n" + "="*60)
+print("INDIVIDUAL MODELS - VALIDATION SET PERFORMANCE")
+print("="*60)
+
+val_summary = pd.DataFrame({
+    ticker: {
+        'Best Trees': r['params']['trees'],
+        'Best Depth': str(r['params']['depth']),
+        'Best Min_Leaf': r['params']['min_leaf'],
+        'RMSE': r['val_rmse'],
+        'MAE': r['val_mae'],
+        'R²': r['val_r2']
+    } for ticker, r in individual_results.items()
+}).T
+
+print(val_summary.round(4))
+val_summary.to_csv('individual_rf_validation_results.csv')
+
+# --- Visualization: Validation performance ---
+fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+fig.suptitle('Individual RF Models - Validation Performance', fontsize=14)
+
+# R² scores
+ax = axes[0, 0]
+r2_scores = [individual_results[t]['val_r2'] for t in TICKERS]
+bars = ax.bar(TICKERS, r2_scores, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+ax.set_ylabel('R² Score')
+ax.set_title('Validation R² by Stock')
+ax.set_ylim(0, 1)
+for bar, score in zip(bars, r2_scores):
+    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, 
+            f'{score:.3f}', ha='center', fontsize=10)
+
+# RMSE
+ax = axes[0, 1]
+rmse_scores = [individual_results[t]['val_rmse'] for t in TICKERS]
+bars = ax.bar(TICKERS, rmse_scores, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+ax.set_ylabel('RMSE')
+ax.set_title('Validation RMSE by Stock')
+for bar, score in zip(bars, rmse_scores):
+    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
+            f'{score:.3f}', ha='center', fontsize=10)
+
+# Feature importance comparison
+ax = axes[1, 0]
+feature_names = pd.read_csv(f'{TICKERS[0]}_X_train.csv', index_col=0, nrows=1).columns
+imp_df = pd.DataFrame({t: individual_models[t].feature_importances_ for t in TICKERS}, 
+                       index=feature_names)
+imp_df.plot(kind='barh', ax=ax, width=0.8)
+ax.set_xlabel('Importance')
+ax.set_title('Feature Importance by Stock')
+ax.legend(loc='lower right', fontsize=8)
+
+# Heatmap of feature importance
+ax = axes[1, 1]
+im = ax.imshow(imp_df.values.T, aspect='auto', cmap='YlOrRd')
+ax.set_xticks(range(len(feature_names)))
+ax.set_xticklabels(feature_names, rotation=45, ha='right', fontsize=9)
+ax.set_yticks(range(len(TICKERS)))
+ax.set_yticklabels(TICKERS)
+ax.set_title('Feature Importance Heatmap')
+plt.colorbar(im, ax=ax, shrink=0.8)
+
+plt.tight_layout()
+plt.savefig('individual_rf_models.png', dpi=150)
+plt.show()
+
+# --- Feature importance analysis ---
+print("\n" + "="*60)
+print("FEATURE IMPORTANCE ANALYSIS")
+print("="*60)
+
+print("\nMost important feature per stock:")
+for ticker in TICKERS:
+    imp = pd.Series(individual_models[ticker].feature_importances_, index=feature_names)
+    top_feature = imp.idxmax()
+    print(f"  {ticker}: {top_feature} ({imp[top_feature]:.3f})")
+
+print("\nAverage feature importance across all stocks:")
+avg_imp = imp_df.mean(axis=1).sort_values(ascending=False)
+print(avg_imp.round(3))
+
+print(f"\n{'='*60}")
+print("Individual RF models training complete!")
+print(f"Models saved: [TICKER]_rf_individual.joblib")
+print("Results saved: individual_rf_validation_results.csv, individual_rf_models.png")
+
